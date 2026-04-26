@@ -31,10 +31,10 @@ print(r'''
 ''')
 
 # === Konfigurasi ===
-DISCORD_USER_TOKEN = "TOKEN_DISCORD" #ganti dengan TOKEN discord
-CHANNEL_ID = 12345  # Ganti dengan ID channel yang kamu targetkan
-INTERVAL_MIN = 5 #random time minimal
-INTERVAL_MAX = 9 #random time maksimal
+DISCORD_USER_TOKEN = "TOKEN KAMU"
+CHANNEL_ID = # Channel ID yang jadi Target
+INTERVAL_MIN = 1
+INTERVAL_MAX = 3
 OLLAMA_URL = "http://localhost:11434"
 OLLAMA_MODEL = "gemma:2b"
 
@@ -43,16 +43,30 @@ next_reply_time = datetime.now()
 pending_message = None
 has_printed_wait = False
 
-# Inisialisasi client sebagai selfbot
 client = commands.Bot(command_prefix="!", self_bot=True)
 
-# === Fungsi ambil jawaban dari AI lokal (Ollama) ===
+# === AI RESPONSE ===
 async def get_ai_reply(prompt):
     try:
         crypto_prompt = (
-            "You’re a laid-back friend replying casually and briefly. "
-            "Keep it simple, chill, and natural — no extra stuff, no emojis, no repeats. "
-            "Sometimes say 'yeah', 'true', or 'same', but keep it random and real.\n\n"
+            "You are a real human chatting casually.\n"
+            "Reply naturally.\n\n"
+
+            "STRICT RULES:\n"
+            "- Max 7 words\n"
+            "- One sentence only\n"
+            "- No explanations\n"
+            "- No introductions\n"
+            "- No meta phrases\n"
+            "- No quotes\n"
+            "- No emojis\n\n"
+
+            "FORBIDDEN:\n"
+            "sure, here's, here is, as an ai, in conclusion, this sentence\n\n"
+
+            "STYLE:\n"
+            "casual, short, direct, sometimes like 'yeah', 'true', 'same'\n\n"
+
             f"Message: {prompt}\n"
             "Reply:"
         )
@@ -62,42 +76,46 @@ async def get_ai_reply(prompt):
             "prompt": crypto_prompt,
             "stream": False
         })
+
         response.raise_for_status()
         data = response.json()
         return data.get("response", "").strip()
+
     except Exception as e:
         print(f"[❌] Error Ollama: {e}")
-        return "have a nice day"
+        return ""
 
-# === Event ketika bot siap ===
+# === READY ===
 @client.event
 async def on_ready():
-    print(f"[✅] Login sebagai {client.user} (akun pribadi aktif)")
+    print(f"[✅] Login sebagai {client.user}")
     reply_loop.start()
     auto_restart.start()
 
-# === Event ketika pesan baru diterima ===
+# === LISTEN MESSAGE ===
 @client.event
 async def on_message(message: Message):
     global pending_message
+
     if message.channel.id != CHANNEL_ID:
         return
+
     if message.author.id == client.user.id:
         return
 
-    # print(f"[📥] Pesan dari {message.author.name}: {message.content}")
     pending_message = message
 
-# === Loop interval kirim balasan ===
+# === MAIN LOOP ===
 @tasks.loop(seconds=10)
 async def reply_loop():
     global pending_message, next_reply_time, has_printed_wait
 
     if not pending_message:
-        has_printed_wait = False  # reset kalau gak ada pesan
+        has_printed_wait = False
         return
 
     now = datetime.now()
+
     if now < next_reply_time:
         if not has_printed_wait:
             remaining = int((next_reply_time - now).total_seconds() // 60)
@@ -105,54 +123,56 @@ async def reply_loop():
             has_printed_wait = True
         return
 
-    # Kalau sudah waktunya balas, reset flag agar bisa print lagi next interval
     has_printed_wait = False
 
-    reply = await get_ai_reply(pending_message.content)
-    reply = await get_ai_reply(pending_message.content)
-
-    # === Filtering respons AI yang tidak layak dikirim ===
+    # === Retry AI biar gak aneh ===
     banned_phrases = [
-        "Sure, here's a random sentence",
-        "Here's a sentence",
-        "As an AI language model",
-        "In conclusion"
+        "sure",
+        "here's",
+        "here is",
+        "as an ai",
+        "in conclusion",
+        "this sentence"
     ]
 
-    if any(phrase.lower() in reply.lower() for phrase in banned_phrases) or reply.count("\n") >= 2:
-        print("[⚠️] Balasan AI tidak cocok, tidak dikirim.")
-        pending_message = None
-        next_reply_time = datetime.now() + timedelta(minutes=1)
-        return
+    reply = ""
 
-    # === Kirim jika lolos filter ===
+    for _ in range(3):
+        reply = await get_ai_reply(pending_message.content)
+
+        if reply and not any(p in reply.lower() for p in banned_phrases) and reply.count("\n") < 2:
+            break
+
+    if not reply:
+        reply = random.choice(["yeah true", "same here", "lol true"])
+
+    # === Kirim reply (FITUR REPLY DISCORD) ===
     try:
-        if random.choice([True, False]):
-            content = f"{pending_message.author.mention} {reply}"
-        else:
-            content = reply
+        await pending_message.reply(
+            reply,
+            mention_author=False
+        )
 
-        await pending_message.channel.send(content)
         print(f"[✅] Balas ke {pending_message.author.name}: {reply}")
 
         wait_minutes = random.randint(INTERVAL_MIN, INTERVAL_MAX)
         next_reply_time = datetime.now() + timedelta(minutes=wait_minutes)
         pending_message = None
+
     except Exception as e:
         print(f"[❌] Gagal kirim: {e}")
 
-# === Restart otomatis setiap 2 jam ===
+# === AUTO RESTART ===
 @tasks.loop(hours=2)
 async def auto_restart():
-    print(f"[♻️] Restart otomatis dimulai pada {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"[♻️] Restart pada {datetime.now().strftime('%H:%M:%S')}")
     python = sys.executable
     os.execv(python, [python] + sys.argv)
 
 @auto_restart.before_loop
 async def before_auto_restart():
     await client.wait_until_ready()
-    print(f"[⏳] Script akan auto restart 2 jam sekali")
-    await asyncio.sleep(2 * 60 * 60)  # 3 jam delay sebelum loop pertama
+    await asyncio.sleep(2 * 60 * 60)
 
-# === Jalankan bot ===
+# === RUN ===
 client.run(DISCORD_USER_TOKEN)
